@@ -1,0 +1,88 @@
+name: iOS
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ios:
+    name: Rust XCFramework + unsigned IPA
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build Rust static libs
+        working-directory: rust
+        run: |
+          cargo rustc --release --lib --crate-type staticlib --target aarch64-apple-ios
+          cargo rustc --release --lib --crate-type staticlib --target aarch64-apple-ios-sim
+
+      - name: Stage libs + create XCFramework
+        run: |
+          mkdir -p ios/Frameworks/device ios/Frameworks/sim
+          cp rust/target/aarch64-apple-ios/release/libvpnclient.a ios/Frameworks/device/
+          cp rust/target/aarch64-apple-ios-sim/release/libvpnclient.a ios/Frameworks/sim/
+          xcodebuild -create-xcframework \
+            -library ios/Frameworks/device/libvpnclient.a -headers ios/include \
+            -library ios/Frameworks/sim/libvpnclient.a -headers ios/include \
+            -output ios/Frameworks/VpnClient.xcframework
+
+      - name: Generate Xcode project (XcodeGen)
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Archive (unsigned)
+        run: |
+          xcodebuild archive \
+            -project ios/VpnClient.xcodeproj \
+            -scheme VpnClient \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/VpnClient.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          mkdir -p build/ipa/Payload
+          cp -R build/VpnClient.xcarchive/Products/Applications/VpnClient.app build/ipa/Payload/
+          (cd build/ipa && zip -qry ../VpnClient-unsigned.ipa Payload)
+
+      - name: Pseudo-sign with entitlements (for TrollStore-style installers)
+        continue-on-error: true
+        run: |
+          brew install ldid
+          APP=build/ipa/Payload/VpnClient.app
+          ldid -Sios/App/VpnClient.entitlements "$APP/VpnClient"
+          ldid -Sios/PacketTunnel/PacketTunnel.entitlements "$APP/PlugIns/PacketTunnel.appex/PacketTunnel"
+          (cd build/ipa && zip -qry ../VpnClient-ldid.ipa Payload)
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnclient-ios-unsigned-ipa
+          path: build/VpnClient-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload pseudo-signed IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnclient-ios-ldid-ipa
+          path: build/VpnClient-ldid.ipa
+          if-no-files-found: ignore
+
+      - name: Upload XCFramework
+        uses: actions/upload-artifact@v4
+        with:
+          name: VpnClient-xcframework
+          path: ios/Frameworks/VpnClient.xcframework

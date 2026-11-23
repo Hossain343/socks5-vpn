@@ -1,0 +1,11 @@
+rust/target/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/jniLibs/
+android/local.properties
+ios/Frameworks/
+ios/*.xcodeproj/
+build/
+*.xcarchive
+.DS_Store

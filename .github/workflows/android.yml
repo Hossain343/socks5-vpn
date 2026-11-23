@@ -1,0 +1,104 @@
+name: Android
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  NDK_VERSION: 26.3.11579264
+
+jobs:
+  rust-check:
+    name: Rust compile check + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Host check and unit tests
+        working-directory: rust
+        run: |
+          cargo check --all-targets
+          cargo test
+      - name: Android target check (JNI + TUN fd code)
+        working-directory: rust
+        run: cargo check --lib --target aarch64-linux-android
+
+  apk:
+    name: Build APK
+    needs: rust-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK r26 + platform
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "ndk;${NDK_VERSION}" "platforms;android-34" "build-tools;34.0.0"
+          echo "ANDROID_NDK_HOME=${SDK}/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - name: Build libvpnclient.so (arm64-v8a, armeabi-v7a, x86_64)
+        working-directory: rust
+        run: |
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
+            -o ../android/app/src/main/jniLibs build --release
+          ls -l ../android/app/src/main/jniLibs/*/libvpnclient.so
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Generate Gradle wrapper if missing
+        run: |
+          if [ ! -f android/gradlew ]; then
+            (cd android && gradle wrapper --gradle-version 8.7)
+          fi
+
+      - name: Build APKs
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug assembleRelease
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnclient-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload release APK (debug-signed, installable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnclient-release-apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload native libs
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpnclient-jniLibs
+          path: android/app/src/main/jniLibs

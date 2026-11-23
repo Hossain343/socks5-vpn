@@ -1,0 +1,54 @@
+name: VpnClient
+options:
+  bundleIdPrefix: com.vpnshare
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_BITCODE: NO
+targets:
+  VpnClient:
+    type: application
+    platform: iOS
+    sources: [App]
+    dependencies:
+      - target: PacketTunnel
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: VPN
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    entitlements:
+      path: App/VpnClient.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vpnshare.client
+  PacketTunnel:
+    type: app-extension
+    platform: iOS
+    sources: [PacketTunnel]
+    info:
+      path: PacketTunnel/Info.plist
+      properties:
+        CFBundleDisplayName: VPN Tunnel
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    entitlements:
+      path: PacketTunnel/PacketTunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vpnshare.client.tunnel
+        SWIFT_OBJC_BRIDGING_HEADER: PacketTunnel/Bridging-Header.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/include
+        OTHER_LDFLAGS: "-lvpnclient -lresolv"
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": $(SRCROOT)/Frameworks/device
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": $(SRCROOT)/Frameworks/sim
